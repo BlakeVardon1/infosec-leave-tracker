@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Information Security Team Leave Tracker</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f0f0f0; padding: 20px; }
+    .container { max-width: 900px; margin: auto; background: #fff; padding: 20px; border-radius: 10px; }
+    h2, h3 { margin-top: 0; }
+    input, select, button { padding: 10px; margin: 5px 0; width: 100%; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+    th { background-color: #eee; }
+    .hidden { display: none; }
+    .admin { color: red; font-weight: bold; }
+    .summary-table { margin-top: 30px; background: #f9f9f9; }
+    .admin-controls { margin-top: 20px; }
+    .admin-controls button { width: auto; margin-right: 10px; }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+
+<div class="container">
+  <!-- Login Section -->
+  <div id="loginSection">
+    <h2>Login</h2>
+    <input type="text" id="username" placeholder="Enter your username">
+    <button onclick="login()">Login</button>
+  </div>
+
+  <!-- Main App Section -->
+  <div id="appSection" class="hidden">
+    <h2>Information Security Team Leave Tracker</h2>
+    <p>Welcome, <span id="userDisplay"></span>!</p>
+
+    <!-- Leave Form -->
+    <div id="leaveFormSection">
+      <h3>Apply Leave</h3>
+      <select id="leaveUser"></select>
+      <input type="date" id="startDate" />
+      <input type="date" id="endDate" />
+      <select id="leaveType" onchange="adjustDateForHalfDay()">
+        <option value="AL">Annual Leave</option>
+        <option value="HAL">Half-Day Annual Leave</option>
+        <option value="SL">Sick Leave</option>
+        <option value="HSL">Half-Day Sick Leave</option>
+        <option value="RH">Restricted Holiday</option>
+        <option value="BL">Bereavement Leave</option>
+        <option value="ML">Maternity Leave</option>
+        <option value="CO">Compensatory Off</option>
+      </select>
+      <button onclick="addLeave()">Add Leave</button>
+    </div>
+
+    <!-- Summary Filter -->
+    <h3>Leave Summary</h3>
+    <select id="summaryType" onchange="renderTable()">
+      <option value="weekly">Weekly</option>
+      <option value="monthly" selected>Monthly</option>
+      <option value="yearly">Yearly</option>
+    </select>
+
+    <!-- Admin-only Controls -->
+    <div id="exportSection" class="hidden admin-controls">
+      <button onclick="exportToExcel()">Export to Excel</button>
+      <button onclick="clearAllLeaves()" style="background:#f44336; color:#fff;">Clear All Leaves</button>
+    </div>
+
+    <!-- Leave Table -->
+    <table>
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Leave Type</th>
+          <th>Start Date</th>
+          <th>End Date</th>
+          <th>Days (Excluding Sat/Sun)</th>
+        </tr>
+      </thead>
+      <tbody id="leaveTableBody"></tbody>
+    </table>
+
+    <!-- Admin Monthly Summary -->
+    <div id="monthlySummarySection" class="hidden summary-table">
+      <h3>📅 Monthly Summary (Current Month)</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Total Leave Days</th>
+          </tr>
+        </thead>
+        <tbody id="monthlySummaryBody"></tbody>
+      </table>
+    </div>
+
+    <button onclick="logout()">Logout</button>
+  </div>
+</div>
+
+<script>
+  const users = ["Blake", "Champa", "Mudassar"];
+  let currentUser = null;
+  let isAdmin = false;
+  let leaveData = JSON.parse(localStorage.getItem("leaveData") || "[]");
+
+  // ===== LOGIN & SETUP =====
+  function login() {
+    const username = document.getElementById("username").value.trim();
+    if (!users.includes(username) && username !== "admin") {
+      alert("Invalid username!");
+      return;
+    }
+
+    currentUser = username;
+    isAdmin = (username === "admin");
+
+    document.getElementById("loginSection").classList.add("hidden");
+    document.getElementById("appSection").classList.remove("hidden");
+
+    document.getElementById("userDisplay").textContent = currentUser + (isAdmin ? " (Admin)" : "");
+    setupForm();
+    renderTable();
+  }
+
+  function logout() {
+    currentUser = null;
+    isAdmin = false;
+    document.getElementById("appSection").classList.add("hidden");
+    document.getElementById("loginSection").classList.remove("hidden");
+  }
+
+  function setupForm() {
+    const dropdown = document.getElementById("leaveUser");
+    dropdown.innerHTML = "";
+
+    const allowedUsers = isAdmin ? users : [currentUser];
+    allowedUsers.forEach(user => {
+      const option = document.createElement("option");
+      option.value = user;
+      option.textContent = user;
+      dropdown.appendChild(option);
+    });
+
+    document.getElementById("exportSection").classList.toggle("hidden", !isAdmin);
+    document.getElementById("monthlySummarySection").classList.toggle("hidden", !isAdmin);
+  }
+
+  // ===== FORM BEHAVIOR =====
+  function adjustDateForHalfDay() {
+    const leaveType = document.getElementById("leaveType").value;
+    const startDate = document.getElementById("startDate");
+    const endDate = document.getElementById("endDate");
+
+    if (leaveType === "HAL" || leaveType === "HSL" || leaveType === "RH") {
+      endDate.value = startDate.value;
+      endDate.disabled = true;
+    } else {
+      endDate.disabled = false;
+    }
+  }
+
+  function addLeave() {
+    const user = document.getElementById("leaveUser").value;
+    const start = document.getElementById("startDate").value;
+    const end = document.getElementById("endDate").value;
+    const type = document.getElementById("leaveType").value;
+
+    if (!start || !end) {
+      alert("Please enter both start and end dates.");
+      return;
+    }
+
+    const leaveEntry = { user, startDate: start, endDate: end, leaveType: type };
+    leaveData.push(leaveEntry);
+    localStorage.setItem("leaveData", JSON.stringify(leaveData));
+    renderTable();
+  }
+
+  // ===== DATE CALCULATION =====
+  function getWorkingDays(start, end, type) {
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    let count = 0;
+
+    for (let date = new Date(startDate); date <= endDate; date.setDate(date.getDate() + 1)) {
+      const day = date.getDay();
+      if (day !== 0 && day !== 6) count++; // exclude weekends
+    }
+
+    if (type === "HAL" || type === "HSL") return 0.5;
+    if (type === "RH") return 1;
+    return count;
+  }
+
+  // ===== TABLE RENDERING =====
+  function renderTable() {
+    const tbody = document.getElementById("leaveTableBody");
+    tbody.innerHTML = "";
+
+    const filter = document.getElementById("summaryType").value;
+    const now = new Date();
+
+    const filtered = leaveData.filter(entry => {
+      const entryDate = new Date(entry.startDate);
+      if (!isAdmin && entry.user !== currentUser) return false;
+
+      if (filter === "weekly") {
+        const weekAgo = new Date();
+        weekAgo.setDate(now.getDate() - 7);
+        return entryDate >= weekAgo;
+      }
+
+      if (filter === "monthly") {
+        return entryDate.getMonth() === now.getMonth() && entryDate.getFullYear() === now.getFullYear();
+      }
+
+      if (filter === "yearly") {
+        return entryDate.getFullYear() === now.getFullYear();
+      }
+
+      return true;
+    });
+
+    filtered.forEach(entry => {
+      const days = getWorkingDays(entry.startDate, entry.endDate, entry.leaveType);
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${entry.user}</td>
+        <td>${entry.leaveType}</td>
+        <td>${entry.startDate}</td>
+        <td>${entry.endDate}</td>
+        <td>${days}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    if (isAdmin) renderMonthlySummary();
+  }
+
+  // ===== ADMIN MONTHLY SUMMARY =====
+  function renderMonthlySummary() {
+    const tbody = document.getElementById("monthlySummaryBody");
+    tbody.innerHTML = "";
+
+    const now = new Date();
+    const monthlyData = {};
+
+    leaveData.forEach(entry => {
+      const entryDate = new Date(entry.startDate);
+      if (entryDate.getMonth() === now.getMonth() && entryDate.getFullYear() === now.getFullYear()) {
+        const days = getWorkingDays(entry.startDate, entry.endDate, entry.leaveType);
+        monthlyData[entry.user] = (monthlyData[entry.user] || 0) + days;
+      }
+    });
+
+    users.forEach(user => {
+      const total = monthlyData[user] ? monthlyData[user].toFixed(1) : "0";
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${user}</td><td>${total}</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+
+  // ===== CLEAR ALL LEAVES (Admin Only) =====
+  function clearAllLeaves() {
+    if (!isAdmin) return alert("Only admin can perform this action.");
+    if (confirm("⚠️ Are you sure you want to clear all leave records? This cannot be undone.")) {
+      leaveData = [];
+      localStorage.removeItem("leaveData");
+      renderTable();
+      alert("All leave records cleared successfully!");
+    }
+  }
+
+  // ===== EXPORT TO EXCEL =====
+  function exportToExcel() {
+    const exportData = leaveData.map(entry => ({
+      User: entry.user,
+      "Leave Type": entry.leaveType,
+      "Start Date": entry.startDate,
+      "End Date": entry.endDate,
+      Days: getWorkingDays(entry.startDate, entry.endDate, entry.leaveType)
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Leave Summary");
+    XLSX.writeFile(workbook, "LeaveSummary.xlsx");
+  }
+</script>
+
+</body>
+</html>
